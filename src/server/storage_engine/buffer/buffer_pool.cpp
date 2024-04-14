@@ -236,17 +236,40 @@ RC FileBufferPool::flush_page_internal(Frame &frame)
 }
 
 /**
- * TODO [Lab1] 需要同学们实现某个指定页面的驱逐
+ * 驱逐某个指定页面
  */
 RC FileBufferPool::evict_page(PageNum page_num, Frame *buf)
 {
+  // 将脏页刷盘
+  if (buf->dirty()) {
+    RC rc = flush_page_internal(*buf);
+    if (rc != RC::SUCCESS) {
+      LOG_ERROR("Failed to evict page %s:%d, due to failed to flush page:%s", file_name_.c_str(), page_num, strrc(rc));
+      return rc;
+    }
+  }
+
+  // 释放frame
+  frame_manager_.free(file_desc_, page_num, buf);
+
   return RC::SUCCESS;
 }
 /**
- * TODO [Lab1] 需要同学们实现该文件所有页面的驱逐
+ * 实现该文件所有页面的驱逐
+ * 是在关闭文件时被调用的
  */
 RC FileBufferPool::evict_all_pages()
 {
+  // 将该文件对应的Frame都依次驱逐并刷盘
+  std::list<Frame *> frames = frame_manager_.find_list(file_desc_);
+  for (auto &frame : frames) {
+    RC rc = evict_page(frame->page_num(), frame);
+    if (rc != RC::SUCCESS) {
+      LOG_ERROR("Failed to evict page %s:%d, due to failed to evict page:%s", file_name_.c_str(), frame->page_num(), strrc(rc));
+      return rc;
+    }
+  }
+
   return RC::SUCCESS;
 }
 
