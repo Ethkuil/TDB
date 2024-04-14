@@ -200,24 +200,38 @@ RC FileBufferPool::unpin_page(Frame *frame)
   return RC::SUCCESS;
 }
 
-/**
- * TODO [Lab1] 需要同学们实现页面刷盘，下面是可参考的思路
- */
 RC FileBufferPool::flush_page(Frame &frame)
 {
   std::scoped_lock lock_guard(lock_);
   return flush_page_internal(frame);
 }
-/**
- * TODO [Lab1] 需要同学们实现页面刷盘，下面是可参考的思路
- */
+
 RC FileBufferPool::flush_page_internal(Frame &frame)
 {
-//  1. 获取页面Page
-//  2. 计算该Page在文件中的偏移量
-//  3. 写入数据到文件的目标位置
-//  4. 清除frame的脏标记
-//  5. 记录和返回成功
+  // 1. 获取页面Page
+  Page &page = frame.page();
+
+  // 2. 计算该Page在文件中的偏移量
+  int64_t offset = ((int64_t)frame.page_num()) * BP_PAGE_SIZE;
+
+  // 3. 写入数据到文件的目标位置
+  // seek到目标位置
+  if (lseek(file_desc_, offset, SEEK_SET) == -1) {
+    LOG_ERROR("Failed to flush page %s:%d, due to failed to lseek:%s.", file_name_.c_str(), frame.page_num(), strerror(errno));
+    return RC::IOERR_SEEK;
+  }
+  // 写入数据
+  int ret = writen(file_desc_, &page, BP_PAGE_SIZE);
+  if (ret != 0) {
+    LOG_ERROR("Failed to flush page %s:%d, due to failed to write data:%s, ret=%d", file_name_.c_str(), frame.page_num(), strerror(errno), ret);
+    return RC::IOERR_WRITE;
+  }
+
+  // 4. 清除frame的脏标记
+  frame.clear_dirty();
+
+  // 5. 记录和返回成功
+  LOG_TRACE("Successfully flush page %s:%d", file_name_.c_str(), frame.page_num());
   return RC::SUCCESS;
 }
 
