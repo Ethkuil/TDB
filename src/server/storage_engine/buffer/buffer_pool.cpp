@@ -482,11 +482,24 @@ RC BufferPoolManager::close_file(const char *_file_name)
 }
 
 /**
- * TODO [Lab1] 需要同学们实现页面刷盘
+ * @brief 页面刷盘
  */
 RC BufferPoolManager::flush_page(Frame &frame)
 {
-  return RC::SUCCESS;
+  // 由于BufferPoolManager是全局单例，因此在使用它的公共资源需要加锁，以确保多线程环境下的线程安全
+  std::scoped_lock lock_guard(lock_);
+
+  // BufferPoolManager管理全部文件的页面和页帧，因此
+  // ...需要先找到该Frame对应的FileBufferPool，
+  auto it = fd_buffer_pools_.find(frame.file_desc());
+  if (it == fd_buffer_pools_.end()) {
+    LOG_ERROR("failed to find buffer pool for file desc %d", frame.file_desc());
+    return RC::BUFFERPOOL_NOBUF;
+  }
+  auto bp = it->second;
+
+  // ...再调用FileBufferPool的flush_page(Frame &frame)进行刷盘
+  return bp->flush_page(frame);
 }
 
 static BufferPoolManager *default_bpm = nullptr;
