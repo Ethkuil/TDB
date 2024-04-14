@@ -49,11 +49,31 @@ Frame *FrameManager::get(int file_desc, PageNum page_num)
 }
 
 /**
- * TODO [Lab1] 需要同学们实现页帧驱逐
+ * @brief 页帧驱逐：将 pin_count 为 0 的 frame 从队列中驱除
+ * 场景：内存缓冲区已满，需要进行页面置换
+  * @param evict_action 表示如何处理脏数据的frame，一般是要刷回磁盘，可参考FileBufferPool::allocate_frame方法中的相关逻辑
  */
 int FrameManager::evict_frames(int count, std::function<RC(Frame *frame)> evict_action)
 {
-  return 0;
+  // 对于FrameLruCache的使用，要通过加锁保证线程安全，但注意避免死锁
+  std::lock_guard<std::mutex> lock_guard(lock_);
+
+  int evicted = 0;
+  
+  auto fetcher = [this, &evicted, count, evict_action](const FrameId &frame_id, Frame *frame) -> bool {
+    if (frame->can_evict()) {
+      if (evict_action(frame) == RC::SUCCESS) {
+        frames_.remove(frame_id);
+        // 需要调用FrameAllocator的接口彻底释放该Frame
+        allocator_.free(frame);
+        evicted++;
+      }
+    }
+    return evicted < count;
+  };
+  frames_.foreach(fetcher);
+
+  return evicted;
 }
 
 Frame *FrameManager::get_internal(const FrameId &frame_id)
