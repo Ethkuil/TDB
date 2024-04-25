@@ -338,16 +338,56 @@ RC Table::create_index(Trx *trx, std::vector<const FieldMeta *> &multi_field_met
   return rc;
 }
 
+// 1. 注意更新数据和更新索引的顺序
+// 2. 如果存在多个索引文件，则都需要更新
+// 3. 需要调用上面实现的BplusTreeIndex::insert_entry和delete_entry方法
+// 4. 考虑各种异常的情况，比如在唯一索引上插入了重复数据，需要撤销插入
 RC Table::insert_record(Record &record)
 {
   RC rc = RC::SUCCESS;
+
+  // 插入数据
   rc = record_handler_->insert_record(record.data(), table_meta_.record_size(), &record.rid());
   if (rc != RC::SUCCESS) {
     LOG_ERROR("Insert record failed. table name=%s, rc=%s", table_meta_.name(), strrc(rc));
     return rc;
   }
 
-  // TODO [Lab2] 增加索引的处理逻辑
+  // 插入索引
+  for (Index *index : indexes_) {
+    // 需调用 BplusTreeIndex::insert_entry
+    auto bplus_tree_index = dynamic_cast<BplusTreeIndex *>(index);
+    if (bplus_tree_index == nullptr) {
+      LOG_ERROR("Failed to cast index to BplusTreeIndex. table=%s, index=%s",
+                name(), index->index_meta().name());
+      return RC::INTERNAL;
+    }
+    rc = bplus_tree_index->insert_entry(record.data(), &record.rid());
+
+    // 若插入失败，则回滚
+    if (rc != RC::SUCCESS) {
+      LOG_ERROR("Failed to insert entry into index. table=%s, index=%s, rc=%s",
+                name(), index->index_meta().name(), strrc(rc));
+      // 回滚插入的索引
+      for (Index *rollback_index : indexes_) {
+        if (rollback_index == index) {
+          break;
+        }
+        auto rollback_bplus_tree_index =
+            dynamic_cast<BplusTreeIndex *>(rollback_index);
+        if (rollback_bplus_tree_index == nullptr) {
+          LOG_ERROR(
+              "Failed to cast index to BplusTreeIndex. table=%s, index=%s",
+              name(), rollback_index->index_meta().name());
+          return RC::INTERNAL;
+        }
+        rollback_bplus_tree_index->delete_entry(record.data(), &record.rid());
+      }
+      // 回滚插入的数据
+      record_handler_->delete_record(&record.rid());
+      return rc;
+    }
+  }
 
   return rc;
 }
@@ -356,9 +396,53 @@ RC Table::delete_record(const Record &record)
 {
   RC rc = RC::SUCCESS;
 
-  // TODO [Lab2] 增加索引的处理逻辑
+  // 删除索引
+  for (Index *index : indexes_) {
+    // 需调用 BplusTreeIndex::delete_entry
+    auto bplus_tree_index = dynamic_cast<BplusTreeIndex *>(index);
+    if (bplus_tree_index == nullptr) {
+      LOG_ERROR("Failed to cast index to BplusTreeIndex. table=%s, index=%s",
+                name(), index->index_meta().name());
+      return RC::INTERNAL;
+    }
+    rc = bplus_tree_index->delete_entry(record.data(), &record.rid());
+    if (rc != RC::SUCCESS) {
+      LOG_ERROR("Failed to delete entry from index. table=%s, index=%s, rc=%s",
+                name(), index->index_meta().name(), strrc(rc));
+      return rc;
+    }
 
+    // 若删除失败，则回滚
+    if (rc != RC::SUCCESS) {
+      LOG_ERROR("Failed to delete entry from index. table=%s, index=%s, rc=%s",
+                name(), index->index_meta().name(), strrc(rc));
+      // 回滚删除的索引
+      for (Index *rollback_index : indexes_) {
+        if (rollback_index == index) {
+          break;
+        }
+        auto rollback_bplus_tree_index =
+            dynamic_cast<BplusTreeIndex *>(rollback_index);
+        if (rollback_bplus_tree_index == nullptr) {
+          LOG_ERROR(
+              "Failed to cast index to BplusTreeIndex. table=%s, index=%s",
+              name(), rollback_index->index_meta().name());
+          return RC::INTERNAL;
+        }
+        rollback_bplus_tree_index->insert_entry(record.data(), &record.rid());
+      }
+      return rc;
+    }
+  }
+
+  // 删除数据
   rc = record_handler_->delete_record(&record.rid());
+  if (rc != RC::SUCCESS) {
+    LOG_ERROR("Delete record failed. table name=%s, rc=%s", table_meta_.name(),
+              strrc(rc));
+    return rc;
+  }
+
   return rc;
 }
 

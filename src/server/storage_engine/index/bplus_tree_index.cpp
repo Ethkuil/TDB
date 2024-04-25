@@ -1,5 +1,7 @@
 #include "include/storage_engine/index/bplus_tree_index.h"
 
+#include <vector>
+
 BplusTreeIndex::~BplusTreeIndex() noexcept
 {
   close();
@@ -90,7 +92,30 @@ RC BplusTreeIndex::close()
  */
 RC BplusTreeIndex::insert_entry(const char *record, const RID *rid)
 {
-  // TODO [Lab2] 增加索引项的处理逻辑
+  // 从record中取出multi_field_metas_中的字段值，作为key
+  auto length = multi_field_metas_.size();
+  std::vector<const char *> keys;
+  for (int i = 0; i < length; i++) {
+    keys.emplace_back(record + multi_field_metas_[i].offset());
+  }
+
+  // 对唯一索引的情况专门检查是否存在重复的字段值
+  if (index_meta_.is_unique()) {
+    std::list<RID> rids;
+    RC rc = index_handler_.get_entry(keys.data(), rids, length);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+    if (!rids.empty()) {
+      return RC::RECORD_DUPLICATE_KEY;
+    }
+  }
+
+  // 调用BplusTreeHandler的insert_entry完成插入操作
+  RC rc = index_handler_.insert_entry(keys.data(), rid, length);
+  if (rc != RC::SUCCESS) {
+    return rc;
+  }
   return RC::SUCCESS;
 }
 
@@ -100,7 +125,18 @@ RC BplusTreeIndex::insert_entry(const char *record, const RID *rid)
  */
 RC BplusTreeIndex::delete_entry(const char *record, const RID *rid)
 {
-  // TODO [Lab2] 增加索引项的处理逻辑
+  // 从record中取出multi_field_metas_中的字段值，作为key
+  auto length = multi_field_metas_.size();
+  std::vector<const char *> keys;
+  for (int i = 0; i < length; i++) {
+    keys.emplace_back(record + multi_field_metas_[i].offset());
+  }
+
+  // 调用BplusTreeHandler的delete_entry完成插入操作
+  RC rc = index_handler_.delete_entry(keys.data(), rid, length);
+  if (rc != RC::SUCCESS) {
+    return rc;
+  }
   return RC::SUCCESS;
 }
 
