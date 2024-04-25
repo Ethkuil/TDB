@@ -43,13 +43,40 @@ RC IndexScanPhysicalOperator::next()
   RID rid;
   record_page_handler_.cleanup();
 
-  // TODO [Lab2] 通过IndexScanner循环获取下一个RID，然后通过RecordHandler获取对应的Record
-  // 在现有的查询实现中，会在调用next()方法后通过current_tuple()获取当前的Tuple, 
-  // 从current_tuple()的实现中不难看出, 数据会通过current_record_传递到Tuple中并返回,
+  // 通过IndexScanner循环获取下一个RID，然后通过RecordHandler获取对应的Record
+  // 在现有的查询实现中，会在调用next()方法后通过current_tuple()获取当前的Tuple,
+  // 从current_tuple()的实现中不难看出,
+  // 数据会通过current_record_传递到Tuple中并返回,
   // 因此该next()方法的主要目的就是将recordHandler获取到的数据填充到current_record_中
-  // while(){}
 
-  return RC::SUCCESS;
+  while (true) {
+    // 获取下一个RID
+    RC rc = index_scanner_->next_entry(&rid, isdelete_);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+
+    // 获取对应的Record
+    rc = record_handler_->get_record(record_page_handler_, &rid, readonly_,
+                                     &current_record_);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+
+    // 过滤
+    tuple_._set_record(&current_record_);
+    bool result = false;
+    rc = filter(tuple_, result);
+    if (rc != RC::SUCCESS) {
+      return rc;
+    }
+
+    if (result) {
+      return RC::SUCCESS;
+    } else {
+      return RC::RECORD_EOF;
+    }
+  }
 }
 
 RC IndexScanPhysicalOperator::close()
