@@ -342,7 +342,6 @@ void MvccTrx::trx_fields(Table *table, Field &begin_xid_field, Field &end_xid_fi
   end_xid_field.set_field(&trx_fields.first[1]);
 }
 
-// TODO [Lab5] 需要同学们补充代码，相关提示见文档
 RC MvccTrx::redo(Db *db, const LogEntry &log_entry)
 {
 
@@ -350,8 +349,18 @@ RC MvccTrx::redo(Db *db, const LogEntry &log_entry)
     case LogEntryType::INSERT: {
       Table *table = nullptr;
       const RecordEntry &record_entry = log_entry.record_entry();
+      // 需要根据日志项还原出数据记录和它所属的 Table 对象
+      Record record;
+      record.set_rid(record_entry.rid_);
+      record.set_data(record_entry.data_, record_entry.data_len_);
 
-      // TODO [Lab5] 需要同学们补充代码，相关提示见文档
+      table = db->find_table(record_entry.table_id_);
+      // 然后调用Table::recover_insert_record(Record &record)重新插入这条数据
+      // PS：这个接口和前几次lab中涉及的 Table::insert_record(Record
+      // &record)不同，因为前者具有幂等性，根据 page id 和 slot id
+      // 直接到物理位置去覆盖，因此无论调用多少次都只有一条数据
+      // 而后者每被调用一次就添加一条新记录
+      table->recover_insert_record(record);
 
       operations_.insert(Operation(Operation::Type::INSERT, table, record_entry.rid_));
     } break;
@@ -359,22 +368,32 @@ RC MvccTrx::redo(Db *db, const LogEntry &log_entry)
     case LogEntryType::DELETE: {
       Table *table = nullptr;
       const RecordEntry &record_entry = log_entry.record_entry();
-
-      // TODO [Lab5] 需要同学们补充代码，相关提示见文档
-
+      // 需要根据日志项还原出数据记录和它所属的 Table 对象
+      table = db->find_table(record_entry.table_id_);
+      // 然后调用Table::visit_record(const RID &rid, bool readonly,
+      // std::function<void(Record &)> visitor)
+      // 函数找到要删除的数据记录，
+      table->visit_record(record_entry.rid_, false, [&](Record &record) {
+        // 并按照lab4中的版本号与可见性规则，通过修改事务字段实现逻辑删除。
+        Field begin_xid_field, end_xid_field;
+        trx_fields(table, begin_xid_field, end_xid_field);
+        // 根据文档中的约定，删除记录将end_xid改为 (-当前事务版本号)
+        end_xid_field.set_int(record, -trx_id_);
+      });
       operations_.insert(Operation(Operation::Type::DELETE, table, record_entry.rid_));
     } break;
 
     case LogEntryType::MTR_COMMIT: {
-
-      // TODO [Lab5] 需要同学们补充代码，相关提示见文档
-
+      // 需要获取日志项中的commit_id，
+      int32_t commit_id = log_entry.commit_entry().commit_xid_;
+      // 并调用MvccTrx::commit_with_trx_id(int32_t commit_xid)
+      // 完成事务的重新提交。
+      commit_with_trx_id(commit_id);
     } break;
 
     case LogEntryType::MTR_ROLLBACK: {
-
-      // TODO [Lab5] 需要同学们补充代码，相关提示见文档
-
+      // 调用rollback()进行回滚
+      rollback();
     } break;
 
     default: {
