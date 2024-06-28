@@ -1,5 +1,7 @@
 #include "include/storage_engine/transaction/mvcc_trx.h"
 
+#include <cstdint>
+
 #include "include/storage_engine/recorder/field.h"
 #include "include/storage_engine/schema/database.h"
 
@@ -130,6 +132,11 @@ RC MvccTrx::insert_record(Table *table, Record &record)
     return rc;
   }
 
+  // 补充追加日志以供 lab5 redo 使用
+  log_manager_->append_record_log(LogEntryType::INSERT, trx_id_,
+                                  table->table_id(), record.rid(), record.len(),
+                                  0, record.data());
+
   pair<OperationSet::iterator, bool> ret = operations_.insert(Operation(Operation::Type::INSERT, table, record.rid()));
   if (!ret.second) {
     rc = RC::INTERNAL;
@@ -147,6 +154,11 @@ RC MvccTrx::delete_record(Table *table, Record &record)
   trx_fields(table, begin_xid_field, end_xid_field);
   // 根据文档中的约定，删除记录将end_xid改为 (-当前事务版本号)
   end_xid_field.set_int(record, -trx_id_);
+
+  // 补充追加日志以供 lab5 redo 使用
+  log_manager_->append_record_log(LogEntryType::DELETE, trx_id_,
+                                  table->table_id(), record.rid(), record.len(),
+                                  0, nullptr);
 
   operations_.insert(Operation(Operation::Type::DELETE, table, record.rid()));
   return rc;
