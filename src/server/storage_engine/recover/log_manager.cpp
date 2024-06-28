@@ -1,4 +1,7 @@
 #include "include/storage_engine/recover/log_manager.h"
+
+#include <unordered_set>
+
 #include "include/storage_engine/transaction/trx.h"
 
 RC LogEntryIterator::init(LogFile &log_file)
@@ -117,13 +120,54 @@ RC LogManager::sync()
   return log_buffer_->flush_buffer(*log_file_);
 }
 
-// TODO [Lab5] 需要同学们补充代码，相关提示见文档
 RC LogManager::recover(Db *db)
 {
   TrxManager *trx_manager = GCTX.trx_manager_;
   ASSERT(trx_manager != nullptr, "cannot do recover that trx_manager is null");
 
-  // TODO [Lab5] 需要同学们补充代码，相关提示见文档
+  // 恢复时，LogEntryIterator读取到的可能还有一些未提交的事务的日志，但它们不应该被重做
+  // 因此，需要记录下来哪些事务尚未提交
+  std::unordered_set<int32_t> uncommitted_trx_ids;
+
+  // LogEntryIterator 类是 Redo 日志文件的读取工具，每次读取一条日志项
+  // 使用这个类读取redo.log，从头开始遍历日志文件，直到读到文件尾
+  auto it = LogEntryIterator();
+  it.init(*log_file_);
+  for (it.next(); it.valid(); it.next()) {
+    // 对于读出来的每一条日志项，根据日志项的不同类型执行不同的恢复操作
+    const auto &log_entry = it.log_entry();
+    switch (log_entry.log_type()) {
+      case LogEntryType::MTR_BEGIN: {
+        // 如果是事务开始的日志项，则要根据日志项中的事务id开启一个事务
+        // 提示：调用Trx *MvccTrxManager::create_trx(int32_t trx_id)
+        trx_manager->create_trx(log_entry.trx_id());
+        // 添加到未提交事务的集合中
+        uncommitted_trx_ids.insert(log_entry.trx_id());
+        break;
+      }
+      case LogEntryType::MTR_COMMIT: {
+        // 根据日志项中的事务id找到它所属的事务对象，然后由该事务对象进行重做操作
+        // 提示：调用RC MvccTrx::redo(Db *db, const LogEntry &log_entry)
+        trx_manager->find_trx(log_entry.trx_id())->redo(db, log_entry);
+        // 从未提交事务的集合中移除
+        uncommitted_trx_ids.erase(log_entry.trx_id());
+        break;
+      }
+      // 忽略 ERROR操作
+      case LogEntryType::ERROR: {
+        break;
+      }
+      default:
+        // 重做其他操作
+        trx_manager->find_trx(log_entry.trx_id())->redo(db, log_entry);
+        break;
+    }
+  }
+
+  // rollback 未提交的事务
+  for (const auto &trx_id : uncommitted_trx_ids) {
+    trx_manager->find_trx(trx_id)->rollback();
+  }
 
   return RC::SUCCESS;
 }
